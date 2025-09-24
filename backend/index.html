@@ -1,0 +1,46 @@
+<!-- public/index.html -->
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Voice Translator</title>
+</head>
+<body>
+    <button id="startBtn">Start Speaking</button>
+    <button id="stopBtn" disabled>Stop</button>
+    <div id="status">Ready to translate</div>
+    <audio id="translatedAudio" controls></audio>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script>
+        const socket = io();
+        let mediaRecorder;
+        let audioChunks = [];
+        
+        document.getElementById('startBtn').onclick = startRecording;
+        document.getElementById('stopBtn').onclick = stopRecording;
+        
+        async function startRecording() {
+            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            mediaRecorder = new MediaRecorder(stream);
+            
+            mediaRecorder.ondataavailable = (event) => {
+                if (event.data.size > 0) {
+                    socket.emit('audio-chunk', event.data);
+                }
+            };
+            
+            mediaRecorder.start(1000); // Collect data every second
+        }
+        
+        function stopRecording() {
+            mediaRecorder.stop();
+        }
+        
+        // Receive translated audio
+        socket.on('translated-audio', (audioData) => {
+            const audioBlob = new Blob([audioData], { type: 'audio/wav' });
+            document.getElementById('translatedAudio').src = URL.createObjectURL(audioBlob);
+        });
+    </script>
+</body>
+</html>

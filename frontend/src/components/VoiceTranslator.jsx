@@ -11,7 +11,7 @@ const VoiceTranslator = () => {
 
   useEffect(() => {
     // Initialize socket connection
-    socketRef.current = io('http://localhost:5000');
+    socketRef.current = io('https://voice-translator-1xk5.onrender.com');
     
     socketRef.current.on('translated-audio', (audioData) => {
       playAudio(audioData);
@@ -81,7 +81,7 @@ const VoiceTranslator = () => {
   const translateText = async (text) => {
     try {
       setStatus('Translating...');
-      const response = await fetch('http://localhost:5000/api/test-translation', {
+      const response = await fetch('https://voice-translator-1xk5.onrender.com/api/test-translation', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
@@ -108,7 +108,7 @@ const VoiceTranslator = () => {
       setStatus('Converting to speech...');
       
       // Send text to server for TTS processing
-      const response = await fetch('http://localhost:5000/api/text-to-speech', {
+      const response = await fetch('hhttps://voice-translator-1xk5.onrender.com/api/text-to-speech', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ text, language: 'es' })

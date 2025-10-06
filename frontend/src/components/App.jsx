@@ -35,7 +35,7 @@ const App = () => {
 
   useEffect(() => {
     // Connect to backend
-    socket.current = io('http://localhost:5000');
+    socket.current = io('https://voice-translator-1xk5.onrender.com');
     
     socket.current.on('connect', () => {
       console.log('✅ Connected to server');
@@ -215,7 +215,7 @@ const App = () => {
   const testConnection = async () => {
     try {
       setStatus('Testing connection...');
-      const response = await fetch('http://localhost:5000/api/health');
+      const response = await fetch('https://voice-translator-1xk5.onrender.com/api/health');
       const data = await response.json();
       setDebugInfo(`Server: ${data.status}, HF: ${data.services.huggingFace}`);
       setStatus('Connection test complete');

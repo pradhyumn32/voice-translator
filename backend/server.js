@@ -10,6 +10,7 @@ import { writeFileSync, readFileSync, unlinkSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import gtts from 'gtts';
+import { v2 as GoogleTranslate } from '@google-cloud/translate';
 
 dotenv.config();
 
@@ -31,7 +32,16 @@ app.use((req, res, next) => {
   next();
 });
 
+// Initialize Google Translate client if credentials are provided
+let googleTranslateClient;
+if (process.env.GOOGLE_APPLICATION_CREDENTIALS) {
+  googleTranslateClient = new GoogleTranslate.Translate();
+}
+
 const HUGGING_FACE_TOKEN = process.env.HUGGING_FACE_TOKEN;
+
+// Add this near the top of your file
+const DEBUG_TRANSLATIONS = true;
 
 // Simple test function to check if services are working
 async function testServices() {
@@ -76,7 +86,7 @@ async function mockTextToSpeech(text, language) {
 }
 
 // Main processing pipeline with fallbacks
-async function processAudioPipeline(audioData, sourceLang = 'en', targetLang = 'es') {
+async function processAudioPipeline(audioData, sourceLang = 'auto', targetLang = 'es') {
   console.log('🚀 Starting audio processing pipeline...');
   
   try {
@@ -96,12 +106,14 @@ async function processAudioPipeline(audioData, sourceLang = 'en', targetLang = '
 
     console.log('📊 Audio buffer size:', audioBuffer.length, 'bytes');
     
-    if (audioBuffer.length < 100) {
+    // Increase threshold to prevent processing invalid/empty audio files
+    if (audioBuffer.length < 1000) {
       throw new Error('Audio buffer too small - may be empty');
     }
     
     let originalText;
     let translatedText;
+    let detectedSourceLang = sourceLang;
     
     // STT with better error handling
     try {
@@ -112,15 +124,39 @@ async function processAudioPipeline(audioData, sourceLang = 'en', targetLang = '
       console.log('❌ STT failed, using mock:', sttError.message);
       originalText = await mockSpeechToText(audioBuffer);
     }
-    
-    // Translation
-    try {
-      console.log('🌐 Attempting translation...');
-      translatedText = await translateWithHuggingFace(originalText, sourceLang, targetLang);
-      console.log('✅ Translation successful');
-    } catch (transError) {
-      console.log('❌ Translation failed, using mock:', transError.message);
-      translatedText = await mockTranslation(originalText, sourceLang, targetLang);
+
+    // If source language is 'auto', detect it from the transcribed text
+    if (sourceLang === 'auto') {
+      try {
+        if (googleTranslateClient) {
+          console.log('🕵️ Auto-detecting language with Google from text:', `"${originalText}"`);
+          const [detection] = await googleTranslateClient.detect(originalText);
+          detectedSourceLang = detection.language;
+          console.log(`✅ Language detected by Google: ${detectedSourceLang} (Confidence: ${detection.confidence})`);
+        } else {
+          console.warn('⚠️ Google credentials not found. Falling back to Hugging Face for language detection.');
+          detectedSourceLang = await detectLanguageWithHuggingFace(originalText);
+          console.log(`✅ Language detected by Hugging Face: ${detectedSourceLang}`);
+        }
+      } catch (detectError) {
+        throw new Error(`Language detection failed: ${detectError.message}. Please select a source language manually.`);
+      }
+    }
+
+    // If detected language is the same as the target, skip translation
+    if (detectedSourceLang === targetLang) {
+      console.log('✅ Source and target languages are the same. Skipping translation.');
+      translatedText = originalText;
+    } else {
+      // Translation
+      try {
+        console.log('🌐 Attempting translation...');
+        translatedText = await translateWithHuggingFace(originalText, detectedSourceLang, targetLang);
+        console.log('✅ Translation successful');
+      } catch (transError) {
+        console.log('❌ Translation failed, using mock:', transError.message);
+        translatedText = await mockTranslation(originalText, detectedSourceLang, targetLang);
+      }
     }
     
     console.log('📝 Translated text:', translatedText);
@@ -155,105 +191,156 @@ async function processAudioPipeline(audioData, sourceLang = 'en', targetLang = '
 
 // Hugging Face implementations (with better error handling)
 async function speechToTextWithHuggingFace(audioBuffer) {
-  const model = 'openai/whisper-large-v3';
-  
+  // Array of models to try, from best to fallback
+  const models = [
+    'openai/whisper-large-v3',      // Best quality, but can be slow/overloaded
+    'openai/whisper-base',          // Smaller, faster, and often more available
+    'facebook/wav2vec2-base-960h'   // A different architecture as a final fallback
+  ];
+
+  for (const model of models) {
+    try {
+      
+      console.log(`🎙️ Sending audio to STT model: ${model}, size: ${audioBuffer.length}`);
+      const response = await axios.post(
+        `https://api-inference.huggingface.co/models/${model}`,
+        audioBuffer,
+        {
+          headers: {
+            'Authorization': `Bearer ${HUGGING_FACE_TOKEN}`,
+            'Accept': 'application/json',
+            'Content-Type': 'audio/webm' // Explicitly tell the API what format the audio is in
+          },
+          responseType: 'json',
+          timeout: 30000
+        }
+      );
+      
+      // Check for a valid text response and return it
+      if (response.data && typeof response.data.text === 'string') {
+        console.log(`✅ STT successful with model: ${model}`);
+        return response.data.text;
+      }
+    } catch (error) {
+      console.warn(`- STT model ${model} failed:`, error.response?.data?.error || error.message);
+      // If one model fails, the loop will continue to the next one.
+    }
+  }
+
+  // If all models in the loop fail, throw an error to trigger the mock service
+  throw new Error('All STT models failed.');
+}
+
+async function detectLanguageWithHuggingFace(text) {
+  const model = 'papluca/xlm-roberta-base-language-detection';
+  console.log(`🕵️ Detecting language with Hugging Face model: ${model}`);
   try {
-    console.log('🎙️ Sending audio to Whisper, size:', audioBuffer.length);
-    
-    // First try with audio/webm (the actual format we're sending)
     const response = await axios.post(
       `https://api-inference.huggingface.co/models/${model}`,
-      audioBuffer,
+      { inputs: text },
       {
         headers: {
           'Authorization': `Bearer ${HUGGING_FACE_TOKEN}`,
-          'Content-Type': 'audio/webm;codecs=opus', // Correct MIME type from the browser
-          'Accept': 'application/json' // Explicitly set the Accept header
+          'Content-Type': 'application/json',
         },
-        responseType: 'json',
-        timeout: 30000
+        timeout: 15000
       }
     );
-    
-    if (response.data?.text) {
-      return response.data.text;
+
+    // The model returns an array of label/score objects. The first one is the most likely.
+    if (response.data && Array.isArray(response.data[0]) && response.data[0].length > 0) {
+      const topResult = response.data[0][0];
+      if (topResult.label) {
+        return topResult.label;
+      }
     }
-    // Handle cases where Whisper returns an empty string
-    if (response.data && 'text' in response.data) {
-      return response.data.text;
-    }
-    throw new Error('Invalid response structure from STT API');
+    throw new Error('Invalid response format from language detection model.');
+
   } catch (error) {
-    console.error('Hugging Face STT error:', error.response?.data || error.message);
-    throw error;
+    const errorMessage = error.response?.data?.error || error.message;
+    console.error(`- Language detection with ${model} failed:`, errorMessage);
+    throw new Error(`Hugging Face language detection failed: ${errorMessage}`);
   }
 }
 
 async function translateWithHuggingFace(text, sourceLang, targetLang) {
-  // Helper to perform a single translation request
-  const doTranslation = async (inputText, model) => {
-    try {
-      console.log(`🌐 Attempting translation with model: ${model}`);
-      const response = await axios.post(
-        `https://api-inference.huggingface.co/models/${model}`,
-        {
-          inputs: inputText,
-          options: { wait_for_model: true }
-        },
-        {
-          headers: {
-            'Authorization': `Bearer ${HUGGING_FACE_TOKEN}`,
-            'Content-Type': 'application/json',
-          },
-          timeout: 30000
-        }
-      );
-      if (response.data && response.data[0] && response.data[0].translation_text) {
-        console.log(`✅ Translation successful with ${model}`);
-        return response.data[0].translation_text;
+  // Update Strategy 0: Prioritize Google Translate for Japanese
+  if (targetLang === 'ja' || sourceLang === 'ja') {
+    if (googleTranslateClient) {
+      try {
+        console.log('🌐 Using Google Translate for Japanese...');
+        const [translation] = await googleTranslateClient.translate(text, {
+          from: sourceLang,
+          to: targetLang
+        });
+        console.log('✅ Google Translation successful');
+        return translation;
+      } catch (error) {
+        console.warn('❌ Google Translate failed:', error.message);
       }
-      throw new Error('Invalid response structure from translation API');
-    } catch (error) {
-      console.warn(`- Translation with ${model} failed: ${error.response?.status || error.message}`);
-      return null; // Return null to indicate failure
-    }
-  };
-
-
-  // Strategy 1: Try direct translation (e.g., fr-es)
-  let translatedText = await doTranslation(text, `Helsinki-NLP/opus-mt-${sourceLang}-${targetLang}`);
-  if (translatedText) return translatedText;
-
-  // Strategy 2: Try reverse model (e.g., es-fr)
-  // Note: This is less likely to work for many pairs but is a quick check.
-  translatedText = await doTranslation(text, `Helsinki-NLP/opus-mt-${targetLang}-${sourceLang}`);
-  if (translatedText) return translatedText;
-
-  // Strategy 3: Pivot through English
-  if (sourceLang !== 'en' && targetLang !== 'en') {
-    console.log('🔄 Pivoting translation through English...');
-    
-    // Use a better model for Japanese to English translation
-    const sourceToEnglishModel = sourceLang === 'ja' 
-      ? 'staka/fugumt-ja-en' 
-      : `Helsinki-NLP/opus-mt-${sourceLang}-en`;
-    
-    const englishToTargetModel = targetLang === 'ja'
-        ? 'staka/fugumt-en-ja' // Or another good en-ja model
-        : `Helsinki-NLP/opus-mt-en-${targetLang}`;
-
-
-    const textInEnglish = await doTranslation(text, sourceToEnglishModel);
-
-    if (textInEnglish) {
-      translatedText = await doTranslation(textInEnglish, `Helsinki-NLP/opus-mt-en-${targetLang}`);
-      if (translatedText) return translatedText;
     }
   }
 
+  // Strategy 1: Try direct translation with Helsinki-NLP models
+  const modelName = `Helsinki-NLP/opus-mt-${sourceLang}-${targetLang}`;
+  try {
+    const translatedText = await doTranslation(text, modelName);
+    if (translatedText) return translatedText;
+  } catch (error) {
+    console.log(`- Direct translation with ${modelName} failed. Attempting pivot...`);
+  }
+
+  // Strategy 2: Pivot through English (for non-ja/zh sources)
+  if (sourceLang !== 'en' && targetLang !== 'en') {
+    console.log('🔄 Pivoting translation through English...');
+    const textInEnglish = await doTranslation(text, `Helsinki-NLP/opus-mt-${sourceLang}-en`);
+    if (textInEnglish) {
+      const translatedText = await doTranslation(textInEnglish, `Helsinki-NLP/opus-mt-en-${targetLang}`);
+      if (translatedText) return translatedText;
+    }
+  }
   // If all strategies fail, throw an error to trigger the mock fallback
   throw new Error('All translation strategies failed.');
 }
+
+// Update the doTranslation function to handle different model types
+const doTranslation = async (inputText, model, params = {}) => {
+  // Simplified doTranslation function
+  try {
+    console.log(`🌐 Attempting translation with model: ${model}`);
+    const payload = {
+      inputs: inputText,
+      options: { wait_for_model: true },
+      ...params
+    };
+    const response = await axios.post(
+      `https://api-inference.huggingface.co/models/${model}`,
+      payload,
+      {
+        headers: {
+          'Authorization': `Bearer ${HUGGING_FACE_TOKEN}`,
+          'Content-Type': 'application/json',
+        },
+        timeout: 45000
+      }
+    );
+
+    // Handle different response formats
+    if (response.data) {
+      if (Array.isArray(response.data) && response.data[0]?.translation_text) {
+        return response.data[0].translation_text;
+      } else if (typeof response.data.translation === 'string') {
+        return response.data.translation;
+      } else if (typeof response.data === 'string') {
+        return response.data;
+      }
+    }
+    throw new Error('Invalid response format from translation model');
+  } catch (error) {
+    console.error(`❌ Translation failed with model ${model}:`, error.message);
+    throw error;
+  }
+};
 
 async function textToSpeechWithHuggingFace(text, targetLang) {
   const modelMap = {

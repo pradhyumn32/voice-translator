@@ -9,10 +9,29 @@ const App = () => {
   const [error, setError] = useState('');
   const [debugInfo, setDebugInfo] = useState('');
   const [isConnected, setIsConnected] = useState(false);
+  const [sourceLang, setSourceLang] = useState('auto'); // Default to auto-detect
+  const [targetLang, setTargetLang] = useState('es'); // Default: Spanish
   
   const mediaRecorder = useRef(null);
   const socket = useRef(null);
   const audioChunks = useRef([]);
+
+  // Available languages - you can expand this list
+  const languages = [
+    { code: 'auto', name: 'Auto-Detect' },
+    { code: 'en', name: 'English' },
+    { code: 'es', name: 'Spanish' },
+    { code: 'fr', name: 'French' },
+    { code: 'de', name: 'German' },
+    { code: 'it', name: 'Italian' },
+    { code: 'pt', name: 'Portuguese' },
+    { code: 'ru', name: 'Russian' },
+    { code: 'ja', name: 'Japanese' },
+    { code: 'zh', name: 'Chinese' },
+    { code: 'hi', name: 'Hindi' },
+    { code: 'ar', name: 'Arabic' },
+    { code: 'ko', name: 'Korean' }
+  ];
 
   useEffect(() => {
     // Connect to backend
@@ -30,12 +49,11 @@ const App = () => {
     });
     
     socket.current.on('translated-audio', ({ audio, text }) => {
-  console.log('✅ Received translated audio + text');
-  playTranslatedAudio(audio, text);
-  setStatus('Translation complete!');
-  setIsRecording(false);
-});
-
+      console.log('✅ Received translated audio + text');
+      playTranslatedAudio(audio, text);
+      setStatus('Translation complete!');
+      setIsRecording(false);
+    });
     
     socket.current.on('status-update', (newStatus) => {
       console.log('Status update:', newStatus);
@@ -90,16 +108,30 @@ const App = () => {
       });
       
       mediaRecorder.current.ondataavailable = (event) => {
-        if (event.data.size > 0) {
-          console.log('📨 Sending audio chunk, size:', event.data.size);
-          setDebugInfo(`Sending audio: ${event.data.size} bytes`);
-          socket.current.emit('audio-chunk', event.data);
-        }
+        audioChunks.current.push(event.data);
       };
       
       mediaRecorder.current.onstop = () => {
-        console.log('⏹️ Recording stopped');
+        console.log('⏹️ Recording stopped, processing data...');
         stream.getTracks().forEach(track => track.stop());
+
+        // Combine chunks and send inside onstop
+        const audioBlob = new Blob(audioChunks.current, { type: 'audio/webm;codecs=opus' });
+        
+        if (audioBlob.size === 0) {
+          console.warn('🎤 No audio data captured. Not sending to server.');
+          setStatus('No audio detected. Please try again.');
+          return;
+        }
+        
+        console.log('📨 Sending complete audio, size:', audioBlob.size);
+        setDebugInfo(`Sending audio: ${audioBlob.size} bytes`);
+
+        socket.current.emit('audio-stream', {
+          audio: audioBlob,
+          sourceLang: sourceLang,
+          targetLang: targetLang
+        });
       };
       
       mediaRecorder.current.onerror = (event) => {
@@ -107,10 +139,10 @@ const App = () => {
         setError('Recording error: ' + event.error);
       };
       
-      // Start recording, sending data every 2 seconds
-      mediaRecorder.current.start(2000);
+      // Start recording
+      mediaRecorder.current.start();
       setIsRecording(true);
-      setStatus('Speak now...');
+      setStatus(`Speak now (${getLanguageName(sourceLang)} → ${getLanguageName(targetLang)})...`);
       setDebugInfo('Recording active - speak into microphone');
       
     } catch (error) {
@@ -124,59 +156,61 @@ const App = () => {
     if (mediaRecorder.current && isRecording) {
       console.log('🛑 Stopping recording...');
       mediaRecorder.current.stop();
+      setIsRecording(false);
+      audioChunks.current = []; // Clear chunks for next recording
       setStatus('Processing...');
       setDebugInfo('Processing audio...');
     }
   };
 
- const playTranslatedAudio = (audioData, textFallback = '') => {
-  try {
-    console.log('🔊 Playing translated audio...');
+  const playTranslatedAudio = (audioData, textFallback = '') => {
+    try {
+      console.log('🔊 Playing translated audio...');
 
-    // Handle case where backend sent invalid or mock audio
-    if (!audioData || (audioData.byteLength !== undefined && audioData.byteLength < 50)) {
-      console.warn("⚠️ No valid audio received, falling back to browser TTS");
-      if (textFallback) {
-        browserTextToSpeech(textFallback);
-      } else {
-        setError("No valid audio received");
+      // Handle case where backend sent invalid or mock audio
+      if (!audioData || (audioData.byteLength !== undefined && audioData.byteLength < 50)) {
+        console.warn("⚠️ No valid audio received, falling back to browser TTS");
+        if (textFallback) {
+          browserTextToSpeech(textFallback, targetLang);
+        } else {
+          setError("No valid audio received");
+        }
+        return;
       }
-      return;
-    }
 
-    // Convert buffer to Uint8Array
-    const uint8Array = new Uint8Array(audioData);
+      // Convert buffer to Uint8Array
+      const uint8Array = new Uint8Array(audioData);
 
-    // Most TTS APIs (if working) return MP3 or WAV
-    const audioBlob = new Blob([uint8Array], { type: 'audio/wav' });
-    const audioUrl = URL.createObjectURL(audioBlob);
-    const audio = new Audio(audioUrl);
+      // Most TTS APIs (if working) return MP3 or WAV
+      const audioBlob = new Blob([uint8Array], { type: 'audio/wav' });
+      const audioUrl = URL.createObjectURL(audioBlob);
+      const audio = new Audio(audioUrl);
 
-    audio.onended = () => {
-      URL.revokeObjectURL(audioUrl);
-      console.log('Audio playback finished');
-    };
+      audio.onended = () => {
+        URL.revokeObjectURL(audioUrl);
+        console.log('Audio playback finished');
+      };
 
-    audio.onerror = (e) => {
-      console.error('Audio playback error:', e);
-      console.warn("⚠️ Falling back to browser TTS");
-      if (textFallback) browserTextToSpeech(textFallback);
-    };
-
-    audio.play()
-      .then(() => console.log('✅ Audio playback started'))
-      .catch(e => {
-        console.error('Audio play failed:', e);
+      audio.onerror = (e) => {
+        console.error('Audio playback error:', e);
         console.warn("⚠️ Falling back to browser TTS");
-        if (textFallback) browserTextToSpeech(textFallback);
-      });
+        if (textFallback) browserTextToSpeech(textFallback, targetLang);
+      };
 
-  } catch (error) {
-    console.error('Audio play error:', error);
-    console.warn("⚠️ Falling back to browser TTS");
-    if (textFallback) browserTextToSpeech(textFallback);
-  }
-};
+      audio.play()
+        .then(() => console.log('✅ Audio playback started'))
+        .catch(e => {
+          console.error('Audio play failed:', e);
+          console.warn("⚠️ Falling back to browser TTS");
+          if (textFallback) browserTextToSpeech(textFallback, targetLang);
+        });
+
+    } catch (error) {
+      console.error('Audio play error:', error);
+      console.warn("⚠️ Falling back to browser TTS");
+      if (textFallback) browserTextToSpeech(textFallback, targetLang);
+    }
+  };
 
   const testConnection = async () => {
     try {
@@ -191,17 +225,40 @@ const App = () => {
   };
 
   const browserTextToSpeech = (text, lang = "es-ES") => {
-  if ("speechSynthesis" in window) {
-    const utterance = new SpeechSynthesisUtterance(text);
-    utterance.lang = lang;
-    utterance.rate = 1.0;
-    utterance.pitch = 1.0;
-    window.speechSynthesis.speak(utterance);
-    console.log("🗣️ Browser TTS speaking:", text);
-  } else {
-    setError("Browser TTS not supported");
-  }
-};
+    // Map our language codes to browser TTS language codes
+    const langMap = {
+      'en': 'en-US',
+      'es': 'es-ES',
+      'fr': 'fr-FR',
+      'de': 'de-DE',
+      'it': 'it-IT',
+      'pt': 'pt-PT',
+      'ru': 'ru-RU',
+      'ja': 'ja-JP',
+      'zh': 'zh-CN',
+      'hi': 'hi-IN',
+      'ar': 'ar-SA',
+      'ko': 'ko-KR'
+    };
+    
+    const ttsLang = langMap[lang] || 'es-ES';
+    
+    if ("speechSynthesis" in window) {
+      const utterance = new SpeechSynthesisUtterance(text);
+      utterance.lang = ttsLang;
+      utterance.rate = 1.0;
+      utterance.pitch = 1.0;
+      window.speechSynthesis.speak(utterance);
+      console.log("🗣️ Browser TTS speaking:", text);
+    } else {
+      setError("Browser TTS not supported");
+    }
+  };
+
+  const getLanguageName = (code) => {
+    const lang = languages.find(l => l.code === code);
+    return lang ? lang.name : code;
+  };
 
   return (
     <div className="app">
@@ -214,6 +271,43 @@ const App = () => {
         </div>
       </header>
       
+      {/* Language Selection */}
+      <div className="language-selection">
+        <div className="language-group">
+          <label htmlFor="source-lang">Source Language:</label>
+          <select 
+            id="source-lang"
+            value={sourceLang} 
+            onChange={(e) => setSourceLang(e.target.value)}
+            disabled={isRecording}
+          >
+            {languages.map(lang => (
+              <option key={`source-${lang.code}`} value={lang.code}>
+                {lang.name}
+              </option>
+            ))}
+          </select>
+        </div>
+        
+        <div className="language-arrow">→</div>
+        
+        <div className="language-group">
+          <label htmlFor="target-lang">Target Language:</label>
+          <select 
+            id="target-lang"
+            value={targetLang} 
+            onChange={(e) => setTargetLang(e.target.value)}
+            disabled={isRecording}
+          >
+            {languages.map(lang => (
+              <option key={`target-${lang.code}`} value={lang.code}>
+                {lang.name}
+              </option>
+            ))}
+          </select>
+        </div>
+      </div>
+      
       <div className="controls">
         <div className="button-group">
           <button 
@@ -221,7 +315,7 @@ const App = () => {
             disabled={isRecording || !isConnected}
             className="record-btn start"
           >
-            🎤 Start Speaking
+            🎤 Start Speaking ({getLanguageName(sourceLang)} → {getLanguageName(targetLang)})
           </button>
           
           <button 
@@ -265,6 +359,7 @@ const App = () => {
           <li>Ensure microphone permissions are granted</li>
           <li>Click "Test Connection" to check server status</li>
           <li>Speak clearly into the microphone</li>
+          <li>Some language combinations may work better than others</li>
         </ul>
       </div>
     </div>

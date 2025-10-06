@@ -108,7 +108,7 @@ const VoiceTranslator = () => {
       setStatus('Converting to speech...');
       
       // Send text to server for TTS processing
-      const response = await fetch('hhttps://voice-translator-1xk5.onrender.com/api/text-to-speech', {
+      const response = await fetch('https://voice-translator-1xk5.onrender.com/api/text-to-speech', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ text, language: 'es' })

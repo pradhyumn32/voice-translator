@@ -86,7 +86,7 @@ async function mockTextToSpeech(text, language) {
 }
 
 // Main processing pipeline with fallbacks
-async function processAudioPipeline(audioData, sourceLang = 'auto', targetLang = 'es') {
+async function processAudioPipeline(audioData, sourceLang = 'auto', targetLang = 'es', socket) {
   console.log('🚀 Starting audio processing pipeline...');
   
   try {
@@ -120,6 +120,12 @@ async function processAudioPipeline(audioData, sourceLang = 'auto', targetLang =
       console.log('🎙️ Attempting STT...');
       originalText = await speechToTextWithHuggingFace(audioBuffer);
       console.log('✅ STT successful:', originalText);
+
+      // Emit the transcribed text immediately to the client
+      if (socket) {
+        console.log('📤 Sending intermediate transcription to client');
+        socket.emit('transcription-update', { originalText });
+      }
     } catch (sttError) {
       console.log('❌ STT failed, using mock:', sttError.message);
       originalText = await mockSpeechToText(audioBuffer);
@@ -181,7 +187,7 @@ async function processAudioPipeline(audioData, sourceLang = 'auto', targetLang =
     }
     
     console.log('✅ Pipeline completed successfully');
-    return { audio: translatedAudio, text: translatedText };
+    return { audio: translatedAudio, text: translatedText, originalText: originalText };
     
   } catch (error) {
     console.error('💥 Pipeline error:', error);
@@ -459,7 +465,7 @@ io.on('connection', (socket) => {
     console.log(`📨 Received audio stream from ${socket.id}, size: ${audioData.length}, from: ${sourceLang}, to: ${targetLang}`);
 
     try {
-      const result = await processAudioPipeline(audioData, sourceLang, targetLang);
+      const result = await processAudioPipeline(audioData, sourceLang, targetLang, socket);
       console.log('📤 Sending translated audio back to client');
       socket.emit('translated-audio', { audio: result.audio, text: result.text });
     } catch (error) {

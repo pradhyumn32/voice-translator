@@ -14,7 +14,8 @@ const App = () => {
   const [inputText, setInputText] = useState('');
   const [translatedText, setTranslatedText] = useState('');
   const [theme, setTheme] = useState('light');
-  
+  const [translatedAudioData, setTranslatedAudioData] = useState(null); // Store audio for replay
+
   const mediaRecorder = useRef(null);
   const socket = useRef(null);
   const audioChunks = useRef([]);
@@ -46,19 +47,25 @@ const App = () => {
 
   useEffect(() => {
     // Connect to backend
-    socket.current = io('https://voice-translator-1xk5.onrender.com');
-    
+    socket.current = io('http://localhost:5000');
+
     socket.current.on('connect', () => {
       console.log('✅ Connected to server');
       setIsConnected(true);
       setStatus('Ready to translate');
     });
-    
+
     socket.current.on('connected', (data) => {
       console.log('Server connection confirmed:', data);
       setDebugInfo(`Connected: ${data.socketId}`);
     });
-    
+
+    socket.current.on('transcription-update', ({ originalText }) => {
+      console.log('✅ Received transcription update:', originalText);
+      setInputText(originalText || 'Transcribing...');
+      setStatus('Transcription complete, translating...');
+    });
+
     socket.current.on('translated-audio', ({ audio, text, originalText }) => {
       console.log('✅ Received translated audio + text', { originalText, translatedText: text });
       setInputText(originalText || 'Could not transcribe audio.');
@@ -67,25 +74,25 @@ const App = () => {
       setStatus('Translation complete!');
       setIsRecording(false);
     });
-    
+
     socket.current.on('status-update', (newStatus) => {
       console.log('Status update:', newStatus);
       setStatus(newStatus);
     });
-    
+
     socket.current.on('error', (errorMsg) => {
       console.error('Server error:', errorMsg);
       setError(errorMsg);
       setStatus('Error occurred');
       setIsRecording(false);
     });
-    
+
     socket.current.on('disconnect', () => {
       console.log('❌ Disconnected from server');
       setIsConnected(false);
       setStatus('Disconnected from server');
     });
-    
+
     return () => {
       if (socket.current) {
         socket.current.disconnect();
@@ -100,45 +107,45 @@ const App = () => {
       setError('');
       setStatus('Requesting microphone access...');
       setDebugInfo('Initializing recording...');
-      
+
       // Check microphone permissions
       if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
         throw new Error('Microphone access not supported in this browser');
       }
-      
-      const stream = await navigator.mediaDevices.getUserMedia({ 
+
+      const stream = await navigator.mediaDevices.getUserMedia({
         audio: {
           sampleRate: 16000,
           channelCount: 1,
           echoCancellation: true
-        } 
+        }
       });
-      
+
       console.log('✅ Microphone access granted');
       setDebugInfo('Microphone active');
-      
+
       audioChunks.current = [];
       mediaRecorder.current = new MediaRecorder(stream, {
         mimeType: 'audio/webm;codecs=opus'
       });
-      
+
       mediaRecorder.current.ondataavailable = (event) => {
         audioChunks.current.push(event.data);
       };
-      
+
       mediaRecorder.current.onstop = () => {
         console.log('⏹️ Recording stopped, processing data...');
         stream.getTracks().forEach(track => track.stop());
 
         // Combine chunks and send inside onstop
         const audioBlob = new Blob(audioChunks.current, { type: 'audio/webm;codecs=opus' });
-        
+
         if (audioBlob.size === 0) {
           console.warn('🎤 No audio data captured. Not sending to server.');
           setStatus('No audio detected. Please try again.');
           return;
         }
-        
+
         console.log('📨 Sending complete audio, size:', audioBlob.size);
         setDebugInfo(`Sending audio: ${audioBlob.size} bytes`);
 
@@ -148,18 +155,18 @@ const App = () => {
           targetLang: targetLang
         });
       };
-      
+
       mediaRecorder.current.onerror = (event) => {
         console.error('MediaRecorder error:', event);
         setError('Recording error: ' + event.error);
       };
-      
+
       // Start recording
       mediaRecorder.current.start();
       setIsRecording(true);
       setStatus(`Speak now (${getLanguageName(sourceLang)} → ${getLanguageName(targetLang)})...`);
       setDebugInfo('Recording active - speak into microphone');
-      
+
     } catch (error) {
       console.error('Recording start error:', error);
       setError(`Recording failed: ${error.message}`);
@@ -181,6 +188,11 @@ const App = () => {
   const playTranslatedAudio = (audioData, textFallback = '') => {
     try {
       console.log('🔊 Playing translated audio...');
+
+      // Store audio data for replay
+      if (audioData && (audioData.byteLength === undefined || audioData.byteLength >= 50)) {
+        setTranslatedAudioData({ audioData, textFallback });
+      }
 
       // Handle case where backend sent invalid or mock audio
       if (!audioData || (audioData.byteLength !== undefined && audioData.byteLength < 50)) {
@@ -227,17 +239,19 @@ const App = () => {
     }
   };
 
-  const testConnection = async () => {
-    try {
-      setStatus('Testing connection...');
-      const response = await fetch('https://voice-translator-1xk5.onrender.com/api/health');
-      const data = await response.json();
-      setDebugInfo(`Server: ${data.status}, HF: ${data.services.huggingFace}`);
-      setStatus('Connection test complete');
-    } catch (error) {
-      setError('Connection test failed: ' + error.message);
+  const replayTranslatedAudio = () => {
+    if (!translatedAudioData) {
+      console.warn('No audio to replay');
+      // Fallback to browser TTS with translated text
+      if (translatedText) {
+        browserTextToSpeech(translatedText, targetLang);
+      }
+      return;
     }
+    playTranslatedAudio(translatedAudioData.audioData, translatedAudioData.textFallback);
   };
+
+
 
   const browserTextToSpeech = (text, lang = "es-ES") => {
     // Map our language codes to browser TTS language codes
@@ -255,9 +269,9 @@ const App = () => {
       'ar': 'ar-SA',
       'ko': 'ko-KR'
     };
-    
+
     const ttsLang = langMap[lang] || 'es-ES';
-    
+
     if ("speechSynthesis" in window) {
       const utterance = new SpeechSynthesisUtterance(text);
       utterance.lang = ttsLang;
@@ -281,129 +295,136 @@ const App = () => {
 
   return (
     <div className='bg-background-light dark:bg-background-dark font-display text-gray-800 dark:text-gray-200'>
-    <div className="flex flex-col min-h-screen">
-      <header className="bg-background-light/80 dark:bg-background-dark/80 backdrop-blur-sm sticky top-0 z-50 border-b border-gray-200 dark:border-gray-800">
-       <nav className="container mx-auto px-6 py-4 flex items-center justify-between">
-<div className="flex items-center gap-3">
-<div className="text-primary">
-<svg className="h-8 w-8" fill="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M12.87 15.07l-2.54-2.51.03-.03c1.74-1.94 2.98-4.17 3.71-6.53H17V4h-7V2H8v2H1v1.99h11.17C11.5 7.92 10.44 9.75 9 11.35 8.07 10.32 7.3 9.19 6.69 8h-2c.73 1.63 1.73 3.17 2.98 4.56l-5.09 5.02L4 19l5-5 3.11 3.11.76-2.04zM18.5 10h-2L12 22h2l1.12-3h4.75L21 22h2l-4.5-12zm-2.62 7l1.62-4.33L19.12 17h-3.24z"></path></svg>
-</div>
-<h1 className="text-2xl font-bold text-gray-900 dark:text-white">Transly</h1>
-</div>
-<div className="flex-grow hidden md:flex items-center justify-center gap-8">
-<a className="text-sm font-medium text-gray-600 dark:text-gray-300 hover:text-primary transition-colors" href="#">Features</a>
-<a className="text-sm font-medium text-gray-600 dark:text-gray-300 hover:text-primary transition-colors" href="#">Pricing</a>
-<a className="text-sm font-medium text-gray-600 dark:text-gray-300 hover:text-primary transition-colors" href="#">Support</a>
-</div>
-<div className="flex items-center gap-4">
-<button onClick={toggleTheme} className="flex items-center justify-center p-2 rounded-full text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors" id="theme-toggle">
-<span className="material-symbols-outlined dark:hidden">light_mode</span>
-<span className="material-symbols-outlined hidden dark:inline">dark_mode</span>
-</button>
-<button className="hidden md:block text-sm font-medium text-gray-600 dark:text-gray-300 hover:text-primary transition-colors">Log In</button>
-<button className="bg-primary text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-primary/90 transition-colors">
-                        Get Started
-                    </button>
-</div>
-</nav>
-</header>
-<main className='flex-grow flex items-center justify-center py-12 px-4 sm:px-6 lg:px-8'>
-<div className="w-full max-w-4xl space-y-8">
-<div className="text-center">
-<h2 className="text-3xl font-bold tracking-tight text-gray-900 dark:text-white sm:text-4xl">Real-Time Translation</h2>
-<p className="mt-4 text-lg text-gray-600 dark:text-gray-400">Speak and watch your words get translated instantly.</p>
-</div>
-<div className="bg-white dark:bg-card-dark p-6 sm:p-8 rounded-xl shadow-lg border border-gray-200 dark:border-gray-800">
-<div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-start">
-<div className="space-y-4">
-<div className="flex items-center justify-between">
-<label className="block text-sm font-medium text-gray-700 dark:text-gray-300" for="from-language">Spoken Language</label>
-<select
-className="form-select appearance-none block w-1/2 px-3 py-2 border border-gray-300 dark:border-gray-700 rounded-lg shadow-sm placeholder-gray-400 focus:outline-none focus:ring-primary focus:border-primary sm:text-sm bg-gray-50 dark:bg-gray-800 text-gray-900 dark:text-white" id="from-language" name="from-language"
-value={sourceLang} 
-            onChange={(e) => setSourceLang(e.target.value)}
-            disabled={isRecording}>
-{languages.map(lang => (
-              <option key={`source-${lang.code}`} value={lang.code}>
-                {lang.name}
-              </option>
-            ))}
-</select>
-</div>
-<div className="relative">
-<textarea 
-  className="block w-full border border-gray-300 dark:border-gray-700 rounded-lg shadow-sm p-4 pr-12 focus:ring-primary focus:border-primary sm:text-sm bg-gray-50 dark:bg-gray-800 text-gray-900 dark:text-white placeholder-gray-500 dark:placeholder-gray-400" 
-  id="source-text" 
-  name="source-text" 
-  placeholder="Your spoken text will appear here..." 
-  rows="8"
-  value={inputText}
-  readOnly></textarea>
-<div className="absolute bottom-4 right-4 flex items-center justify-center p-2 rounded-full text-primary bg-primary/10 mic-active">
-<button onClick={startRecording} 
-  disabled={isRecording || !isConnected}><span className="material-symbols-outlined">mic</span></button>
-</div>
-</div>
-</div>
-<div className="relative flex flex-col h-full">
-<div className="flex items-center justify-between">
-<label className="block text-sm font-medium text-gray-700 dark:text-gray-300" for="to-language">Translated Language</label>
-<select
-  className="form-select appearance-none block w-1/2 px-3 py-2 border border-gray-300 dark:border-gray-700 rounded-lg shadow-sm placeholder-gray-400 focus:outline-none focus:ring-primary focus:border-primary sm:text-sm bg-gray-50 dark:bg-gray-800 text-gray-900 dark:text-white" id="to-language" name="to-language"
-   value={targetLang} 
-    onChange={(e) => setTargetLang(e.target.value)}
-    disabled={isRecording}>
-   {languages.map(lang => (
-              <option key={`target-${lang.code}`} value={lang.code}>
-                {lang.name}
-              </option>
-            ))}
-</select>
-</div>
-<div className="relative flex-grow mt-4">
-<div className="h-full w-full border border-gray-300 dark:border-gray-700 rounded-lg shadow-sm p-4 bg-gray-50 dark:bg-gray-800 text-gray-900 dark:text-white sm:text-sm" id="translated-text">
-{translatedText ? (
-  <p>{translatedText}</p>
-) : (
-  <p className="text-gray-500 dark:text-gray-400">Translated text will appear here...</p>
-)}
-</div>
-<div className="absolute bottom-4 left-4 flex gap-2">
-<button aria-label="Listen to translated text" className="flex items-center justify-center p-2 rounded-full text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors">
-<span className="material-symbols-outlined">volume_up</span>
-</button>
-</div>
-<div className="absolute bottom-4 right-4 flex gap-2">
-<button aria-label="Copy" className="flex items-center justify-center p-2 rounded-full text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors">
-<span className="material-symbols-outlined">content_copy</span>
-</button>
-</div>
-</div>
-</div>
-</div>
+      <div className="flex flex-col min-h-screen">
+        <header className="bg-background-light/80 dark:bg-background-dark/80 backdrop-blur-sm sticky top-0 z-50 border-b border-gray-200 dark:border-gray-800">
+          <nav className="container mx-auto px-6 py-4 flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className="text-primary">
+                <svg className="h-8 w-8" fill="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M12.87 15.07l-2.54-2.51.03-.03c1.74-1.94 2.98-4.17 3.71-6.53H17V4h-7V2H8v2H1v1.99h11.17C11.5 7.92 10.44 9.75 9 11.35 8.07 10.32 7.3 9.19 6.69 8h-2c.73 1.63 1.73 3.17 2.98 4.56l-5.09 5.02L4 19l5-5 3.11 3.11.76-2.04zM18.5 10h-2L12 22h2l1.12-3h4.75L21 22h2l-4.5-12zm-2.62 7l1.62-4.33L19.12 17h-3.24z"></path></svg>
+              </div>
+              <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Transly</h1>
+            </div>
+            <div className="flex items-center gap-4">
+              <button onClick={toggleTheme} className="flex items-center justify-center p-2 rounded-full text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors" id="theme-toggle">
+                <span className="material-symbols-outlined dark:hidden">light_mode</span>
+                <span className="material-symbols-outlined hidden dark:inline">dark_mode</span>
+              </button>
+            </div>
+          </nav>
+        </header>
+        <main className='flex-grow flex items-center justify-center py-12 px-4 sm:px-6 lg:px-8'>
+          <div className="w-full max-w-4xl space-y-8">
+            <div className="text-center">
+              <h2 className="text-3xl font-bold tracking-tight text-gray-900 dark:text-white sm:text-4xl">Real-Time Translation</h2>
+              <p className="mt-4 text-lg text-gray-600 dark:text-gray-400">Speak and watch your words get translated instantly.</p>
+            </div>
+            <div className="bg-white dark:bg-card-dark p-6 sm:p-8 rounded-xl shadow-lg border border-gray-200 dark:border-gray-800">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-start">
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between">
+                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300" for="from-language">Spoken Language</label>
+                    <select
+                      className="form-select appearance-none block w-1/2 px-3 py-2 border border-gray-300 dark:border-gray-700 rounded-lg shadow-sm placeholder-gray-400 focus:outline-none focus:ring-primary focus:border-primary sm:text-sm bg-gray-50 dark:bg-gray-800 text-gray-900 dark:text-white" id="from-language" name="from-language"
+                      value={sourceLang}
+                      onChange={(e) => setSourceLang(e.target.value)}
+                      disabled={isRecording}>
+                      {languages.map(lang => (
+                        <option key={`source-${lang.code}`} value={lang.code}>
+                          {lang.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="relative">
+                    <textarea
+                      className="block w-full border border-gray-300 dark:border-gray-700 rounded-lg shadow-sm p-4 pr-12 focus:ring-primary focus:border-primary sm:text-sm bg-gray-50 dark:bg-gray-800 text-gray-900 dark:text-white placeholder-gray-500 dark:placeholder-gray-400"
+                      id="source-text"
+                      name="source-text"
+                      placeholder="Your spoken text will appear here..."
+                      rows="8"
+                      value={inputText}
+                      readOnly></textarea>
+                    <div className="absolute bottom-4 right-4 flex items-center justify-center p-2 rounded-full text-primary bg-primary/10 mic-active">
+                      <button onClick={startRecording}
+                        disabled={isRecording || !isConnected}><span className="material-symbols-outlined">mic</span></button>
+                    </div>
+                  </div>
+                </div>
+                <div className="relative flex flex-col h-full">
+                  <div className="flex items-center justify-between">
+                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300" for="to-language">Translated Language</label>
+                    <select
+                      className="form-select appearance-none block w-1/2 px-3 py-2 border border-gray-300 dark:border-gray-700 rounded-lg shadow-sm placeholder-gray-400 focus:outline-none focus:ring-primary focus:border-primary sm:text-sm bg-gray-50 dark:bg-gray-800 text-gray-900 dark:text-white" id="to-language" name="to-language"
+                      value={targetLang}
+                      onChange={(e) => setTargetLang(e.target.value)}
+                      disabled={isRecording}>
+                      {languages.map(lang => (
+                        <option key={`target-${lang.code}`} value={lang.code}>
+                          {lang.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="relative flex-grow mt-4">
+                    <div className="h-full w-full border border-gray-300 dark:border-gray-700 rounded-lg shadow-sm p-4 bg-gray-50 dark:bg-gray-800 text-gray-900 dark:text-white sm:text-sm" id="translated-text">
+                      {translatedText ? (
+                        <p>{translatedText}</p>
+                      ) : (
+                        <p className="text-gray-500 dark:text-gray-400">Translated text will appear here...</p>
+                      )}
+                    </div>
+                    <div className="absolute bottom-4 left-4 flex gap-2">
+                      <button
+                        onClick={replayTranslatedAudio}
+                        disabled={!translatedText}
+                        aria-label="Listen to translated text"
+                        className="flex items-center justify-center p-2 rounded-full text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
+                        <span className="material-symbols-outlined">volume_up</span>
+                      </button>
+                    </div>
+                    <div className="absolute bottom-4 right-4 flex gap-2">
+                      <button aria-label="Copy" className="flex items-center justify-center p-2 rounded-full text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors">
+                        <span className="material-symbols-outlined">content_copy</span>
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
 
-<div className="mt-8 flex justify-center items-center gap-4">
-<button
-  onClick={stopRecording} 
-  disabled={!isRecording} 
-  className="bg-red-500 text-white px-6 py-3 rounded-lg text-base font-semibold hover:bg-red-600 transition-colors flex items-center gap-2">
-<span className="material-symbols-outlined">stop</span>
-                            Stop
-                        </button>
-                        <button 
-            onClick={testConnection}
-            className="test-btn"
-          >
-            🔍 Test Connection
-          </button>
-          
-          
-</div>
+              <div className="mt-8 flex justify-center items-center gap-4">
+                {/* <button
+  onClick={startRecording} 
+  disabled={isRecording || !isConnected} 
+  className="bg-green-500 text-white px-6 py-3 rounded-lg text-base font-semibold hover:bg-green-600 transition-colors flex items-center gap-2">
+<span className="material-symbols-outlined">play_arrow</span>
+                            Start ({getLanguageName(sourceLang)} → {getLanguageName(targetLang)})
+                        </button> */}
+                <button
+                  onClick={stopRecording}
+                  disabled={!isRecording}
+                  className="bg-red-500 text-white px-6 py-3 rounded-lg text-base font-semibold hover:bg-red-600 transition-colors flex items-center gap-2">
+                  <span className="material-symbols-outlined">stop</span>
+                  Stop
+                </button>
+
+
+              </div>
+            </div>
+          </div>
+
+        </main>
+
+        <div className="instructions">
+          <h3>Debugging Tips:</h3>
+          <ul>
+            <li>Check browser console for detailed logs</li>
+            <li>Ensure microphone permissions are granted</li>
+
+            <li>Speak clearly into the microphone</li>
+            <li>Some language combinations may work better than others</li>
+          </ul>
+        </div>
       </div>
-    </div>
-
-</main>
-    </div>
     </div>
   );
 };

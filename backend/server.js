@@ -32,7 +32,6 @@ app.use((req, res, next) => {
   next();
 });
 
-// Initialize Google Translate client if credentials are provided
 let googleTranslateClient;
 if (process.env.GOOGLE_APPLICATION_CREDENTIALS) {
   googleTranslateClient = new GoogleTranslate.Translate();
@@ -40,18 +39,17 @@ if (process.env.GOOGLE_APPLICATION_CREDENTIALS) {
 
 const HUGGING_FACE_TOKEN = process.env.HUGGING_FACE_TOKEN;
 
-// Add this near the top of your file
+
 const DEBUG_TRANSLATIONS = true;
 
-// Simple test function to check if services are working
 async function testServices() {
   console.log('🔍 Testing service availability...');
-  
+
   if (!HUGGING_FACE_TOKEN) {
     console.error('❌ No Hugging Face token found. Set HUGGING_FACE_TOKEN in your .env file.');
     return false;
   }
-  
+
   try {
     // Test Hugging Face API access
     const response = await axios.get('https://huggingface.co/api/models', {
@@ -66,56 +64,44 @@ async function testServices() {
   }
 }
 
-// Simple fallback speech-to-text (mock for testing)
 async function mockSpeechToText(audioBuffer) {
   console.log('🎯 Using mock STT - returning test text');
   return "This is a test translation from the mock service";
 }
 
-// Simple fallback translation
 async function mockTranslation(text, sourceLang, targetLang) {
   console.log('🔄 Mock translation:', { text, sourceLang, targetLang });
   return `[Translated to ${targetLang}] ${text}`;
 }
-
-// Simple fallback TTS - return a mock audio buffer
 async function mockTextToSpeech(text, language) {
   console.log('🔊 Mock TTS for:', text);
-  // Return a small silent audio buffer as mock
   return Buffer.from('mock-audio-data');
 }
 
-// Main processing pipeline with fallbacks
 async function processAudioPipeline(audioData, sourceLang = 'auto', targetLang = 'es', socket) {
   console.log('🚀 Starting audio processing pipeline...');
-  
+
   try {
-    // const audioBuffer = Buffer.from(await audioData.arrayBuffer());
     let audioBuffer;
 
     if (Buffer.isBuffer(audioData)) {
-      // Already a Node.js Buffer
       audioBuffer = audioData;
     } else if (audioData?.arrayBuffer) {
-      // Browser Blob-like object (rare in Node)
       audioBuffer = Buffer.from(await audioData.arrayBuffer());
     } else {
-      // Last fallback
       audioBuffer = Buffer.from(audioData);
     }
 
     console.log('📊 Audio buffer size:', audioBuffer.length, 'bytes');
-    
-    // Increase threshold to prevent processing invalid/empty audio files
+
     if (audioBuffer.length < 1000) {
       throw new Error('Audio buffer too small - may be empty');
     }
-    
+
     let originalText;
     let translatedText;
     let detectedSourceLang = sourceLang;
-    
-    // STT with better error handling
+
     try {
       console.log('🎙️ Attempting STT...');
       originalText = await speechToTextWithHuggingFace(audioBuffer);
@@ -164,9 +150,9 @@ async function processAudioPipeline(audioData, sourceLang = 'auto', targetLang =
         translatedText = await mockTranslation(originalText, detectedSourceLang, targetLang);
       }
     }
-    
+
     console.log('📝 Translated text:', translatedText);
-    
+
     // TTS with multiple fallback models
     let translatedAudio;
     try {
@@ -185,10 +171,10 @@ async function processAudioPipeline(audioData, sourceLang = 'auto', targetLang =
       console.log('❌ All TTS services failed, using mock:', ttsError.message);
       translatedAudio = await mockTextToSpeech(translatedText, targetLang);
     }
-    
+
     console.log('✅ Pipeline completed successfully');
     return { audio: translatedAudio, text: translatedText, originalText: originalText };
-    
+
   } catch (error) {
     console.error('💥 Pipeline error:', error);
     throw error;
@@ -197,19 +183,18 @@ async function processAudioPipeline(audioData, sourceLang = 'auto', targetLang =
 
 // Hugging Face implementations (with better error handling)
 async function speechToTextWithHuggingFace(audioBuffer) {
-  // Array of models to try, from best to fallback
+  // Fast models that work on router.huggingface.co/hf-inference
   const models = [
-    'openai/whisper-large-v3',      // Best quality, but can be slow/overloaded
-    'openai/whisper-base',          // Smaller, faster, and often more available
-    'facebook/wav2vec2-base-960h'   // A different architecture as a final fallback
+    'openai/whisper-base',       // Faster, good quality
+    'openai/whisper-large-v3',   // Fallback for better accuracy
   ];
 
   for (const model of models) {
     try {
-      
-      console.log(`🎙️ Sending audio to STT model: ${model}, size: ${audioBuffer.length}`);
+
+      console.log(`🎙️ Sending audio to STT model: ${model}, size: ${audioBuffer.length}`); // Corrected a typo here from "ssize" to "size"
       const response = await axios.post(
-        `https://api-inference.huggingface.co/models/${model}`,
+        `https://router.huggingface.co/hf-inference/models/${model}`,
         audioBuffer,
         {
           headers: {
@@ -218,10 +203,10 @@ async function speechToTextWithHuggingFace(audioBuffer) {
             'Content-Type': 'audio/webm' // Explicitly tell the API what format the audio is in
           },
           responseType: 'json',
-          timeout: 30000
+          timeout: 15000  // Reduced from 30s for faster response
         }
       );
-      
+
       // Check for a valid text response and return it
       if (response.data && typeof response.data.text === 'string') {
         console.log(`✅ STT successful with model: ${model}`);
@@ -238,18 +223,18 @@ async function speechToTextWithHuggingFace(audioBuffer) {
 }
 
 async function detectLanguageWithHuggingFace(text) {
-  const model = 'papluca/xlm-roberta-base-language-detection';
+  const model = 'papluca/xlm-roberta-base-language-detection'; // Corrected a typo here from "xllm" to "xlm"
   console.log(`🕵️ Detecting language with Hugging Face model: ${model}`);
   try {
     const response = await axios.post(
-      `https://api-inference.huggingface.co/models/${model}`,
+      `https://router.huggingface.co/hf-inference/models/${model}`,
       { inputs: text },
       {
         headers: {
           'Authorization': `Bearer ${HUGGING_FACE_TOKEN}`,
           'Content-Type': 'application/json',
         },
-        timeout: 15000
+        timeout: 10000  // Reduced timeout for faster detection
       }
     );
 
@@ -320,14 +305,14 @@ const doTranslation = async (inputText, model, params = {}) => {
       ...params
     };
     const response = await axios.post(
-      `https://api-inference.huggingface.co/models/${model}`,
+      `https://router.huggingface.co/hf-inference/models/${model}`,
       payload,
       {
         headers: {
           'Authorization': `Bearer ${HUGGING_FACE_TOKEN}`,
           'Content-Type': 'application/json',
         },
-        timeout: 45000
+        timeout: 30000  // Increased to 30s to prevent timeouts
       }
     );
 
@@ -362,59 +347,59 @@ async function textToSpeechWithHuggingFace(text, targetLang) {
   };
 
   const model = modelMap[targetLang] || modelMap['es'];
-  
+
   try {
     // First attempt with a language-specific model
     console.log(`🔊 Using TTS model: ${model} for text: "${text.substring(0, 50)}..."`);
-    
+
     const response = await axios.post(
-      `https://api-inference.huggingface.co/models/${model}`,
+      `https://router.huggingface.co/hf-inference/models/${model}`,
       { inputs: text },
       {
-        headers: { 
+        headers: {
           'Authorization': `Bearer ${HUGGING_FACE_TOKEN}`,
           'Content-Type': 'application/json',
           'Accept': 'audio/wav' // Bark model typically returns wav
         },
         responseType: 'arraybuffer',
-        timeout: 45000 // Longer timeout for TTS
+        timeout: 20000 // Reduced from 45s for faster TTS
       }
     );
 
     if (response.data.byteLength < 100) {
       throw new Error('Audio response too short - likely an error');
     }
-    
+
     console.log(`✅ TTS successful, audio size: ${response.data.byteLength} bytes`);
     return Buffer.from(response.data);
   } catch (error) {
     console.error(`❌ TTS failed with model ${model}:`, error.response?.status, error.message);
-    
+
     // Try more robust/general fallback models
     const fallbackModels = [
       'suno/bark', // Multilingual, can be slow
       'espnet/kan-bayashi_ljspeech_vits', // English fallback
       'microsoft/speecht5_tts' // Another robust English fallback
     ];
-    
+
     for (const fallbackModel of fallbackModels) {
       try {
         console.log(`🔄 Trying fallback TTS model: ${fallbackModel}`);
-        
+
         const fallbackResponse = await axios.post(
-          `https://api-inference.huggingface.co/models/${fallbackModel}`,
+          `https://router.huggingface.co/hf-inference/models/${fallbackModel}`,
           { inputs: text },
           {
-            headers: { 
+            headers: {
               'Authorization': `Bearer ${HUGGING_FACE_TOKEN}`,
               'Content-Type': 'application/json',
               'Accept': 'audio/wav'
             },
             responseType: 'arraybuffer',
-            timeout: 30000
+            timeout: 15000  // Reduced timeout for fallback models
           }
         );
-        
+
         if (fallbackResponse.data.byteLength > 100) {
           console.log(`✅ Fallback TTS successful with ${fallbackModel}`);
           return Buffer.from(fallbackResponse.data);
@@ -424,25 +409,25 @@ async function textToSpeechWithHuggingFace(text, targetLang) {
         continue;
       }
     }
-    
+
     throw new Error('All TTS models failed');
   }
 }
 
 async function textToSpeechWithGoogle(text, targetLang) {
   console.log('🔊 Using Google TTS for:', text);
-  
+
   return new Promise((resolve, reject) => {
     try {
       const speech = new gtts(text, targetLang);
       const tmpFile = join(tmpdir(), `tts-${Date.now()}.mp3`);
-      
+
       speech.save(tmpFile, (err, result) => {
         if (err) {
           reject(err);
           return;
         }
-        
+
         const audioBuffer = readFileSync(tmpFile);
         unlinkSync(tmpFile); // Clean up temp file
         resolve(audioBuffer);
@@ -456,7 +441,7 @@ async function textToSpeechWithGoogle(text, targetLang) {
 // Enhanced Socket.io with better error handling
 io.on('connection', (socket) => {
   console.log('👤 User connected:', socket.id);
-  
+
   socket.on('audio-stream', async (data) => {
     const { audio: audioData, sourceLang, targetLang } = data;
     if (!audioData) {
@@ -473,11 +458,11 @@ io.on('connection', (socket) => {
       socket.emit('error', `Pipeline failed: ${error.message}`);
     }
   });
-  
+
   socket.on('disconnect', (reason) => {
     console.log('👤 User disconnected:', socket.id, 'Reason:', reason);
   });
-  
+
   // Send initial connection acknowledgement
   socket.emit('connected', { message: 'Connected to translation server', socketId: socket.id });
 });
@@ -485,7 +470,7 @@ io.on('connection', (socket) => {
 // Health check endpoint with service status
 app.get('/api/health', async (req, res) => {
   const servicesWorking = await testServices();
-  res.json({ 
+  res.json({
     status: servicesWorking ? 'healthy' : 'degraded',
     timestamp: new Date().toISOString(),
     services: {

@@ -45,11 +45,16 @@ body {
 }
 
 .controls {
-  background: white;
+  background: rgba(255, 255, 255, 0.95);
   border-radius: 15px;
   padding: 30px;
   box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
   margin-bottom: 20px;
+}
+
+.dark .controls {
+  background: rgba(30, 41, 59, 0.95);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
 }
 
 .language-selector {
@@ -66,6 +71,10 @@ body {
   color: #555;
 }
 
+.dark .language-selector label {
+  color: #d1d5db;
+}
+
 .language-selector select {
   padding: 10px 15px;
   border: 2px solid #ddd;
@@ -77,6 +86,12 @@ body {
   min-width: 150px;
 }
 
+.dark .language-selector select {
+  background: #1e293b;
+  border-color: #475569;
+  color: #f1f5f9;
+}
+
 .language-selector select:focus {
   outline: none;
   border-color: #667eea;
@@ -85,6 +100,10 @@ body {
 .language-selector select:disabled {
   background-color: #f5f5f5;
   cursor: not-allowed;
+}
+
+.dark .language-selector select:disabled {
+  background-color: #334155;
 }
 
 .button-group {
@@ -153,6 +172,10 @@ body {
   border-left: 4px solid #2196F3;
 }
 
+.dark .status-container {
+  background: #1e293b;
+}
+
 .status {
   font-size: 1.2rem;
   font-weight: 600;
@@ -173,13 +196,23 @@ body {
   color: #495057;
 }
 
+.dark .debug-info {
+  background: #334155;
+  color: #cbd5e1;
+}
+
 .results-container {
-  background: white;
+  background: rgba(255, 255, 255, 0.95);
   border-radius: 15px;
   padding: 30px;
   box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
   margin-bottom: 20px;
   animation: slideUp 0.5s ease;
+}
+
+.dark .results-container {
+  background: rgba(30, 41, 59, 0.95);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
 }
 
 .results-container h3 {
@@ -201,6 +234,11 @@ body {
   align-items: center;
 }
 
+.dark .translated-text {
+  color: #f1f5f9;
+  background: #1e293b;
+}
+
 .error-message {
   background: #ffebee;
   border: 1px solid #f44336;
@@ -211,11 +249,22 @@ body {
   animation: shake 0.5s ease;
 }
 
+.dark .error-message {
+  background: #7f1d1d;
+  border-color: #991b1b;
+  color: #fca5a5;
+}
+
 .instructions {
   background: rgba(255, 255, 255, 0.9);
   border-radius: 15px;
   padding: 25px;
   box-shadow: 0 5px 20px rgba(0, 0, 0, 0.1);
+}
+
+.dark .instructions {
+  background: rgba(30, 41, 59, 0.9);
+  box-shadow: 0 5px 20px rgba(0, 0, 0, 0.3);
 }
 
 .instructions h3 {
@@ -237,8 +286,12 @@ body {
   line-height: 1.5;
 }
 
+.dark .instructions li {
+  color: #cbd5e1;
+}
+
 .instructions li:before {
-  content: "💡";
+  content: \"💡\";
   position: absolute;
   left: 0;
   top: 8px;
@@ -246,11 +299,16 @@ body {
 
 /* VoiceTranslator Component Styles */
 .voice-translator {
-  background: white;
+  background: rgba(255, 255, 255, 0.95);
   border-radius: 15px;
   padding: 30px;
   box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
   margin-top: 20px;
+}
+
+.dark .voice-translator {
+  background: rgba(30, 41, 59, 0.95);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
 }
 
 .voice-translator h2 {

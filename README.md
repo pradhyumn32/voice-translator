@@ -17,11 +17,16 @@ A powerful, real-time voice translation application that converts speech from on
 
 ### Prerequisites
 
+**Option 1: Docker (Recommended)**
+- [Docker Desktop](https://www.docker.com/products/docker-desktop/) installed and running
+- Hugging Face API token ([Get one here](https://huggingface.co/settings/tokens))
+
+**Option 2: Manual Setup**
 - Node.js (v14 or higher)
 - npm or yarn
 - Hugging Face API token ([Get one here](https://huggingface.co/settings/tokens))
 
-### Installation
+### Manual Installation
 
 1. **Clone the repository**
 ```bash
@@ -49,7 +54,7 @@ HUGGING_FACE_TOKEN=your_huggingface_token_here
 PORT=5000
 ```
 
-### Running the Application
+### Running Manually (Without Docker)
 
 1. **Start the backend server**
 ```bash
@@ -64,6 +69,42 @@ cd frontend
 npm start
 ```
 The app will open at `http://localhost:3000`
+
+### 🐳 Docker Deployment (Recommended)
+
+The easiest way to run the application is using Docker Compose:
+
+1. **Ensure Docker Desktop is running**
+
+2. **Configure environment variables**
+   
+   Create a `.env` file in the `backend` directory:
+   ```env
+   HUGGING_FACE_TOKEN=your_huggingface_token_here
+   PORT=5000
+   ```
+
+3. **Build and start the containers**
+   ```bash
+   docker-compose up --build
+   ```
+
+4. **Access the application**
+   - Frontend: `http://localhost` or `http://localhost:80`
+   - Backend API: `http://localhost:5000`
+
+5. **Stop the containers**
+   ```bash
+   docker-compose down
+   ```
+
+**Docker Commands:**
+- View logs: `docker-compose logs -f`
+- View specific service logs: `docker-compose logs -f backend`
+- Rebuild specific service: `docker-compose up --build frontend`
+- Clean up: `docker-compose down -v` (removes volumes)
+
+
 
 ## 🎯 How to Use
 
@@ -98,6 +139,11 @@ The app will open at `http://localhost:3000`
 - **Socket.io** - WebSocket communication
 - **Axios** - HTTP client for API requests
 - **Google TTS** - Text-to-speech fallback
+
+### Infrastructure
+- **Docker** - Containerization
+- **Docker Compose** - Multi-container orchestration
+- **Nginx** - Frontend web server and reverse proxy
 
 ### AI Services
 - **Hugging Face Inference API** - Speech recognition, translation, and TTS
@@ -143,6 +189,8 @@ Voice Translator/
 ├── backend/
 │   ├── server.js          # Main server file
 │   ├── .env              # Environment variables
+│   ├── Dockerfile        # Backend Docker config
+│   ├── .dockerignore     # Docker ignore rules
 │   └── package.json      # Backend dependencies
 ├── frontend/
 │   ├── src/
@@ -150,7 +198,11 @@ Voice Translator/
 │   │   │   ├── App.jsx   # Main app component
 │   │   │   └── VoiceTranslator.jsx
 │   │   └── App.css       # Styles
+│   ├── Dockerfile        # Frontend Docker config
+│   ├── nginx.conf        # Nginx configuration
+│   ├── .dockerignore     # Docker ignore rules
 │   └── package.json      # Frontend dependencies
+├── docker-compose.yml    # Docker orchestration
 └── README.md
 ```
 
@@ -184,6 +236,13 @@ Voice Translator/
 ### 404 Errors from Hugging Face
 - Ensure you're using the router endpoint: `router.huggingface.co/hf-inference`
 - Check that your API token has Inference permissions
+
+### Docker Issues
+- **Docker Desktop not running**: Start Docker Desktop and wait for it to fully initialize
+- **Port already in use**: Stop other services using ports 80 or 5000, or modify ports in `docker-compose.yml`
+- **Build fails**: Try `docker-compose down` then `docker-compose up --build` again
+- **Container keeps restarting**: Check logs with `docker-compose logs backend` or `docker-compose logs frontend`
+
 
 ## 📝 License
 

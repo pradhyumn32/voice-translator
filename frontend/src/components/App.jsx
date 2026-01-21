@@ -47,7 +47,13 @@ const App = () => {
 
   useEffect(() => {
     // Connect to backend
-    socket.current = io('http://localhost:5000');
+    const BACKEND_URL = process.env.REACT_APP_BACKEND_URL ||
+      (process.env.NODE_ENV === 'production'
+        ? 'https://voice-translator-1xk5.onrender.com'
+        : 'http://localhost:5000');
+
+    console.log('🔌 Connecting to backend at:', BACKEND_URL);
+    socket.current = io(BACKEND_URL);
 
     socket.current.on('connect', () => {
       console.log('✅ Connected to server');
